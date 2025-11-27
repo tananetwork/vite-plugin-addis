@@ -1,6 +1,6 @@
 {
   "name": "@tananetwork/vite-plugin-tana",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vite plugin for building full-stack applications on the Tana blockchain platform",
   "type": "module",
   "main": "./dist/index.js",
@@ -26,7 +26,9 @@
     "dev": "tsup --watch",
     "build": "tsup",
     "test": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "start": "mprocs",
+    "demo": "cd example && npm run dev"
   },
   "keywords": [
     "vite",
@@ -54,5 +56,12 @@
     "typescript": "^5.3.0",
     "vite": "^5.0.0",
     "vitest": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "@tananetwork/tana-darwin-arm64": "^0.2.0",
+    "@tananetwork/tana-darwin-x64": "^0.2.0",
+    "@tananetwork/tana-linux-x64": "^0.2.0",
+    "@tananetwork/tana-linux-arm64": "^0.2.0",
+    "@tananetwork/tana-windows-x64": "^0.2.0"
   }
 }

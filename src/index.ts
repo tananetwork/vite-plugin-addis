@@ -201,7 +201,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
 
         // Wait a tick to let Vite print first, then override with our banner
         setTimeout(() => {
-          printTanaBanner(port, edgePort, contractId)
+          printTanaBanner(port, edgePort)
         }, 100)
       })
 
@@ -444,7 +444,7 @@ function scanDir(dir: string, prefix: string, routes: RouteManifest['routes']) {
 /**
  * Print custom Tana startup banner
  */
-function printTanaBanner(vitePort: number, edgePort: number, contractId: string) {
+function printTanaBanner(vitePort: number, edgePort: number) {
   const { reset, bold, magenta, cyan, green, gray, dim } = colors
 
   // Clear screen and move cursor to top
@@ -468,7 +468,6 @@ function printTanaBanner(vitePort: number, edgePort: number, contractId: string)
   console.log()
   console.log(`  ${green}➜${reset}  ${bold}Local:${reset}   ${cyan}http://localhost:${vitePort}/${reset}`)
   console.log(`  ${dim}➜${reset}  ${dim}Edge:${reset}    ${dim}http://localhost:${edgePort}/${reset}`)
-  console.log(`  ${dim}➜${reset}  ${dim}Contract:${reset} ${dim}${contractId}${reset}`)
   console.log()
   console.log(`${gray}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}`)
   console.log()

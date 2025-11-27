@@ -1,0 +1,20 @@
+procs:
+  # Build the plugin in watch mode (rebuilds on source changes)
+  plugin:
+    shell: npm run dev
+    cwd: .
+
+  # Run the example app (uses the built plugin)
+  demo:
+    shell: npm run dev
+    cwd: ./example
+    # Wait for plugin to build first
+    depends_on:
+      - plugin
+
+  # Optional: Run tana-edge for SSR testing
+  # Uncomment if you have tana-edge installed
+  # edge:
+  #   shell: tana-edge
+  #   env:
+  #     EDGE_PORT: "8506"
