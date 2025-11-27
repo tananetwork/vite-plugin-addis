@@ -4,9 +4,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "bundle:server": "esbuild src/get.tsx --bundle --format=esm --outfile=../../contracts/react-ssr/get.js --external:react --external:react-dom/server --jsx=automatic",
-    "bundle:client": "esbuild src/client.tsx --bundle --format=esm --outfile=dist/client.js --jsx=automatic",
-    "bundle": "npm run bundle:server && npm run bundle:client",
+    "bundle": "node ../dist/build.js --server src/get.tsx --client src/client.tsx --out ../../contracts --id react-ssr",
     "deploy": "npm run bundle && echo 'Contract deployed to ../../contracts/react-ssr/'"
   },
   "dependencies": {

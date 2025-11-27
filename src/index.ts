@@ -4,6 +4,17 @@ import { request as httpRequest } from 'http'
 import path from 'path'
 import fs from 'fs'
 
+// ANSI colors for terminal output
+const colors = {
+  reset: '\x1b[0m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  magenta: '\x1b[35m',
+  cyan: '\x1b[36m',
+  green: '\x1b[32m',
+  gray: '\x1b[90m',
+}
+
 export interface TanaPluginOptions {
   /**
    * Path to tana-edge binary
@@ -58,15 +69,58 @@ interface RouteManifest {
  * - HMR for rapid development
  * - Pre-bundled React (no need to bundle React in contracts)
  */
+/**
+ * Find tana-edge binary - checks node_modules first, then PATH
+ */
+function findTanaEdgeBinary(root: string): string {
+  // Check node_modules/.bin first (where npm/bun links binaries)
+  const binPath = path.join(root, 'node_modules', '.bin', 'tana-edge')
+  if (fs.existsSync(binPath)) {
+    return binPath
+  }
+
+  // Check platform-specific package directly
+  const platform = process.platform
+  const arch = process.arch
+  const platformMap: Record<string, string> = {
+    'darwin-arm64': 'darwin-arm64',
+    'darwin-x64': 'darwin-x64',
+    'linux-x64': 'linux-x64',
+    'linux-arm64': 'linux-arm64',
+    'win32-x64': 'windows-x64',
+  }
+  const platformKey = `${platform}-${arch}`
+  const platformPkg = platformMap[platformKey]
+
+  if (platformPkg) {
+    const platformBinPath = path.join(
+      root,
+      'node_modules',
+      '@tananetwork',
+      `tana-${platformPkg}`,
+      'tana-edge'
+    )
+    if (fs.existsSync(platformBinPath)) {
+      return platformBinPath
+    }
+  }
+
+  // Fall back to PATH
+  return 'tana-edge'
+}
+
 export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
   const {
-    edgeBinary = 'tana-edge',
+    edgeBinary,
     edgePort = 8506,
     contractId = 'app',
     contractsDir,
     database,
     dev = true,
   } = options
+
+  // Will be resolved in configResolved hook
+  let resolvedEdgeBinary: string
 
   let tanaEdgeProcess: ChildProcess | null = null
   let viteServer: ViteDevServer
@@ -110,6 +164,10 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       resolvedContractsDir = contractsDir
         ? path.resolve(root, contractsDir)
         : path.resolve(root, '../contracts')
+
+      // Resolve tana-edge binary: explicit option > node_modules > PATH
+      resolvedEdgeBinary = edgeBinary || findTanaEdgeBinary(root)
+      console.log(`[tana] Using tana-edge binary: ${resolvedEdgeBinary}`)
     },
 
     async buildStart() {
@@ -135,6 +193,17 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       if (dev) {
         startTanaEdge()
       }
+
+      // Print custom Tana banner when server is ready
+      server.httpServer?.once('listening', () => {
+        const address = server.httpServer?.address()
+        const port = (typeof address === 'object' ? address?.port : undefined) ?? 5173
+
+        // Wait a tick to let Vite print first, then override with our banner
+        setTimeout(() => {
+          printTanaBanner(port, edgePort, contractId)
+        }, 100)
+      })
 
       // Middleware to proxy SSR requests to tana-edge
       server.middlewares.use(async (req, res, next) => {
@@ -214,7 +283,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
     }
 
     // Spawn tana-edge binary
-    tanaEdgeProcess = spawn(edgeBinary, [], {
+    tanaEdgeProcess = spawn(resolvedEdgeBinary, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
       cwd: path.dirname(resolvedContractsDir), // Run from parent of contracts dir
@@ -370,4 +439,39 @@ function scanDir(dir: string, prefix: string, routes: RouteManifest['routes']) {
       }
     }
   }
+}
+
+/**
+ * Print custom Tana startup banner
+ */
+function printTanaBanner(vitePort: number, edgePort: number, contractId: string) {
+  const { reset, bold, magenta, cyan, green, gray, dim } = colors
+
+  // Clear screen and move cursor to top
+  console.log('\x1b[2J\x1b[H')
+
+  // Print TANA ASCII art
+  console.log(`${magenta}${bold}`)
+  console.log('  ████████╗ █████╗ ███╗   ██╗ █████╗')
+  console.log('  ╚══██╔══╝██╔══██╗████╗  ██║██╔══██╗')
+  console.log('     ██║   ███████║██╔██╗ ██║███████║')
+  console.log('     ██║   ██╔══██║██║╚██╗██║██╔══██║')
+  console.log('     ██║   ██║  ██║██║ ╚████║██║  ██║')
+  console.log('     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝')
+  console.log(`${reset}`)
+
+  console.log(`${gray}  React Server Components + Tailwind + TypeScript${reset}`)
+  console.log()
+
+  // Server info
+  console.log(`${gray}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}`)
+  console.log()
+  console.log(`  ${green}➜${reset}  ${bold}Local:${reset}   ${cyan}http://localhost:${vitePort}/${reset}`)
+  console.log(`  ${dim}➜${reset}  ${dim}Edge:${reset}    ${dim}http://localhost:${edgePort}/${reset}`)
+  console.log(`  ${dim}➜${reset}  ${dim}Contract:${reset} ${dim}${contractId}${reset}`)
+  console.log()
+  console.log(`${gray}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}`)
+  console.log()
+  console.log(`  ${gray}press${reset} ${bold}h${reset} ${gray}to show help${reset}`)
+  console.log()
 }
