@@ -14,7 +14,12 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
+import { fileURLToPath } from 'url'
 import { build } from 'esbuild'
+
+// ESM __dirname polyfill - derive from import.meta.url
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 export interface RouteFile {
   /** File path */
@@ -184,6 +189,10 @@ export async function generateContract(
     '// External dependencies (provided by tana-edge)',
     'import { renderToString } from "react-dom/server";',
     'import { jsx, jsxs, Fragment } from "react/jsx-runtime";',
+    'import { useState, useEffect, useRef, useCallback, useMemo, useContext, createContext } from "react";',
+    '',
+    '// Tana runtime modules (provided by tana-edge)',
+    'import { json, status } from "tana/http";',
     '',
     '// ========== Blockchain Functions ==========',
     '',
@@ -229,7 +238,16 @@ async function bundleFile(filePath: string, type: string, index: number): Promis
     format: 'esm',
     platform: 'neutral',
     write: false,
-    external: ['react', 'react-dom', 'react-dom/server', 'react/jsx-runtime'],
+    external: [
+      'react', 'react-dom', 'react-dom/server', 'react/jsx-runtime',
+      // Tana runtime modules (provided by tana-edge)
+      // Note: tana/db is NOT external - it gets bundled from lib/db/ with query builder code
+      'tana/http', 'tana/net', 'tana/kv', 'tana/block', 'tana/context', 'tana/tx', 'tana/core',
+    ],
+    alias: {
+      // Resolve tana/db to our bundled query builder library
+      'tana/db': path.resolve(__dirname, '../lib/db/index.ts'),
+    },
     jsx: 'automatic',
     minify: false, // Never minify server bundles
     treeShaking: true,

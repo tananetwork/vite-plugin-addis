@@ -1,16 +1,19 @@
 /**
- * Blog API - POST Handler
+ * Blog API - Rails-style POST Handler
  *
- * Uses tana/db query builder for type-safe inserts.
+ * Uses @tananetwork/db Rails-style model methods for ActiveRecord-like inserts.
  *
  * Routes:
- *   POST /api - Create a new post
+ *   POST /api/posts-rails - Create a new post using Model.create()
  */
 
-import { db } from 'tana/db'
-import { posts, type NewPost } from '../db/schema'
+import { model } from 'tana/db'
+import { posts, type NewPost } from '../../db/schema'
 import { status } from 'tana/http'
 import type { Request } from 'tana/net'
+
+// Create the Post model (Rails-style)
+const Post = model(posts)
 
 interface CreatePostBody {
   title: string
@@ -33,29 +36,18 @@ export default async function handler(request: Request) {
   // Calculate read time if not provided
   const estimatedReadTime = readTime || estimateReadTime(content || '')
 
-  // Create the post using Drizzle-style insert
-  const newPost: NewPost = {
+  // Create the post using Rails-style Model.create()
+  const newPostData: NewPost = {
     title,
     excerpt: excerpt || null,
     content: content || null,
     readTime: estimatedReadTime,
   }
 
-  const results = await db
-    .insert(posts)
-    .values(newPost)
-    .returning()
-
-  if (results.length === 0) {
-    return status('internalServerError', {
-      error: 'Failed to create post',
-    })
-  }
-
-  const post = results[0]
+  const post = await Post.create(newPostData)
 
   return status('created', {
-    message: 'Post created successfully',
+    message: 'Post created successfully (Rails-style)',
     post: {
       id: post.id,
       title: post.title,

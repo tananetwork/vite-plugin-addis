@@ -350,9 +350,23 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
         }
 
         try {
+          // Read request body for POST/PUT/PATCH requests
+          let body: string | undefined
+          if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {
+            body = await new Promise<string>((resolve) => {
+              let data = ''
+              req.on('data', (chunk: Buffer) => {
+                data += chunk.toString()
+              })
+              req.on('end', () => {
+                resolve(data)
+              })
+            })
+          }
+
           // Pass the full /api path to tana-edge SSR endpoint
           // The Get() function will detect /api and route to get()/post() handlers
-          const response = await proxyToEdge(req.url, req.method || 'GET')
+          const response = await proxyToEdge(req.url, req.method || 'GET', body)
 
           // Parse and return JSON response from API handler
           res.setHeader('Content-Type', 'application/json')
@@ -569,12 +583,18 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
    * Proxy request to tana-edge's /_dev/ endpoint for local development
    * The /_dev/{contractId}/* endpoint returns raw HTML (not JSON-wrapped)
    */
-  async function proxyToEdge(url: string, method: string): Promise<string> {
+  async function proxyToEdge(url: string, method: string, body?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       // Use /_dev/:contractId endpoint which returns raw HTML
       // /_dev is a pseudo-address for local development (no blockchain address yet)
       // tana-edge requires trailing slash for root path
       const ssrPath = `/_dev/${contractId}${url === '/' ? '/' : url}`
+
+      const headers: Record<string, string> = {}
+      if (body) {
+        headers['Content-Type'] = 'application/json'
+        headers['Content-Length'] = Buffer.byteLength(body).toString()
+      }
 
       const req = httpRequest(
         {
@@ -582,6 +602,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
           port: edgePort,
           path: ssrPath,
           method,
+          headers,
         },
         (res) => {
           let data = ''
@@ -596,6 +617,11 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       req.on('error', (err) => {
         reject(new Error(`Failed to proxy to tana-edge: ${err.message}`))
       })
+
+      // Forward request body for POST/PUT/PATCH requests
+      if (body) {
+        req.write(body)
+      }
       req.end()
     })
   }

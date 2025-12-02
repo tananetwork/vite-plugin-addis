@@ -4,7 +4,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:migrate": "tana db migrate",
+    "db:generate": "tana db generate",
+    "db:status": "tana db status",
+    "db:push": "tana db push"
   },
   "dependencies": {
     "react": "^19.0.0",
