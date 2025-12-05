@@ -18,6 +18,7 @@
     "postgres": "^3.4.0"
   },
   "devDependencies": {
+    "@tananetwork/types": "^0.1.0",
     "@tananetwork/vite-plugin-tana": "file:../..",
     "@playwright/test": "^1.40.0",
     "@types/react": "^19.0.0",

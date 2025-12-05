@@ -78,20 +78,10 @@ export async function tanaBuild(config: TanaBuildConfig): Promise<BuildResult> {
   // Ensure output directory exists
   fs.mkdirSync(contractDir, { recursive: true })
 
-  console.log(`\n🔨 Building Tana app: ${contractId}`)
-  console.log(`   Project root: ${projectRoot}`)
-  console.log(`   Client entry: ${clientEntry}`)
-  console.log(`   Output: ${contractDir}\n`)
+  console.log(`\n🔨 Building ${contractId}`)
 
   // ========== 1. Scan Project Structure ==========
-  console.log('📂 Scanning project structure...')
   const structure = await scanProject(projectRoot)
-
-  console.log(`   Found ${structure.pages.length} page(s)`)
-  console.log(`   Found ${structure.apiGet.length} GET handler(s)`)
-  console.log(`   Found ${structure.apiPost.length} POST handler(s)`)
-  if (structure.init) console.log(`   Found blockchain init`)
-  if (structure.contract) console.log(`   Found blockchain contract`)
 
   // ========== 2. Generate Unified Contract ==========
   // IMPORTANT: Server bundles are NEVER minified because tana-edge's ESM import

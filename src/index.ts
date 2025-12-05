@@ -111,6 +111,8 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       ...process.env as Record<string, string>,
       EDGE_PORT: String(edgePort),
       CONTRACTS_DIR: '.',
+      // Default to info level (clean logs). Set LOG_LEVEL=debug for verbose output.
+      LOG_LEVEL: process.env.LOG_LEVEL || 'info',
     }
 
     if (database) {
@@ -124,10 +126,11 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
     })
 
     tanaEdgeProcess.stdout?.on('data', (data) => {
-      const output = data.toString()
-      out.log('edge', output.trim())
-
-      if (output.includes('tana-edge is running') || output.includes('listening')) {
+      const output = data.toString().trim()
+      if (output) {
+        out.log('edge', output)
+      }
+      if (output.includes('listening')) {
         edgeReady = true
         resolveEdgeReady()
         out.log('ready', 'tana-edge')
@@ -135,10 +138,11 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
     })
 
     tanaEdgeProcess.stderr?.on('data', (data) => {
-      const output = data.toString()
-      out.log('edge', output.trim())
-
-      if (output.includes('tana-edge is running') || output.includes('listening')) {
+      const output = data.toString().trim()
+      if (output) {
+        out.log('edge', output)
+      }
+      if (output.includes('listening')) {
         edgeReady = true
         resolveEdgeReady()
         out.log('ready', 'tana-edge')
