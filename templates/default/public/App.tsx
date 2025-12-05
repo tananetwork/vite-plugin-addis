@@ -2,7 +2,7 @@
 // Client Component - uses React state and effects
 import React from 'react'
 
-export function App({ url }: { url: string }) {
+function App({ url }: { url: string }) {
   // State and interactivity - available immediately in client components
   const [count, setCount] = React.useState(0)
   const [hydrated, setHydrated] = React.useState(false)
@@ -61,3 +61,5 @@ export function App({ url }: { url: string }) {
     </div>
   )
 }
+
+export default App

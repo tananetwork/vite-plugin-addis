@@ -64,17 +64,28 @@ export async function tanaBuild(config: TanaBuildConfig): Promise<BuildResult> {
 
   const contractDir = path.join(outDir, contractId)
 
+  // Determine actual project root: if root is a subdirectory (e.g., 'public'),
+  // look for app/api/blockchain directories in the parent
+  const potentialProjectRoot = path.dirname(root)
+  const hasAppDir = fs.existsSync(path.join(potentialProjectRoot, 'app'))
+  const hasApiDir = fs.existsSync(path.join(potentialProjectRoot, 'api'))
+  const hasBlockchainDir = fs.existsSync(path.join(potentialProjectRoot, 'blockchain'))
+
+  const projectRoot = (hasAppDir || hasApiDir || hasBlockchainDir)
+    ? potentialProjectRoot
+    : root
+
   // Ensure output directory exists
   fs.mkdirSync(contractDir, { recursive: true })
 
   console.log(`\n🔨 Building Tana app: ${contractId}`)
-  console.log(`   Project root: ${root}`)
+  console.log(`   Project root: ${projectRoot}`)
   console.log(`   Client entry: ${clientEntry}`)
   console.log(`   Output: ${contractDir}\n`)
 
   // ========== 1. Scan Project Structure ==========
   console.log('📂 Scanning project structure...')
-  const structure = await scanProject(root)
+  const structure = await scanProject(projectRoot)
 
   console.log(`   Found ${structure.pages.length} page(s)`)
   console.log(`   Found ${structure.apiGet.length} GET handler(s)`)
@@ -88,10 +99,15 @@ export async function tanaBuild(config: TanaBuildConfig): Promise<BuildResult> {
   // All code is inlined for maximum performance (zero I/O during execution)
   console.log('\n📦 Generating unified contract.js...')
 
-  const contractBundle = await generateContract(structure, contractDir)
-  const contractSize = fs.statSync(contractBundle).size
+  const { contractPath, clientBundlePath: clientComponentsPath } = await generateContract(structure, contractDir)
+  const contractSize = fs.statSync(contractPath).size
 
   console.log(`   ✓ Contract: ${(contractSize / 1024).toFixed(1)} KB`)
+
+  if (clientComponentsPath) {
+    const clientComponentsSize = fs.statSync(clientComponentsPath).size
+    console.log(`   ✓ Client Components: ${(clientComponentsSize / 1024).toFixed(1)} KB`)
+  }
 
   // ========== 2. Build Client Bundle ==========
   // Full React bundle for browser - needs to match server rendering
@@ -176,7 +192,7 @@ export async function tanaBuild(config: TanaBuildConfig): Promise<BuildResult> {
   console.log(`   # API requests: http://localhost:8506/${contractId}/api/*\n`)
 
   return {
-    contractBundle,
+    contractBundle: contractPath,
     clientBundle,
     htmlShell: htmlPath,
     cssBundle,

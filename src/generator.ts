@@ -33,6 +33,15 @@ export interface RouteFile {
   params?: string[]
 }
 
+export interface ClientComponent {
+  /** File path */
+  filePath: string
+  /** Unique module ID for Flight protocol reference */
+  moduleId: string
+  /** Component name (from file or export) */
+  name: string
+}
+
 export interface ProjectStructure {
   /** RSC pages from app/ */
   pages: RouteFile[]
@@ -44,6 +53,63 @@ export interface ProjectStructure {
   init?: RouteFile
   /** Blockchain contract handler from blockchain/contract.ts */
   contract?: RouteFile
+  /** Client components (files with 'use client' directive) */
+  clientComponents: ClientComponent[]
+}
+
+/**
+ * Check if a file has 'use client' directive at the top
+ */
+function hasUseClientDirective(filePath: string): boolean {
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8')
+    // Check first few lines for 'use client' directive
+    const lines = content.split('\n').slice(0, 5)
+    return lines.some(line => {
+      const trimmed = line.trim()
+      return trimmed === "'use client'" ||
+             trimmed === '"use client"' ||
+             trimmed === "'use client';" ||
+             trimmed === '"use client";'
+    })
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Generate a stable module ID from file path
+ */
+function generateModuleId(filePath: string, root: string): string {
+  const relative = path.relative(root, filePath)
+  // Remove extension and convert to module-like ID
+  return relative.replace(/\.[^.]+$/, '').replace(/[\/\\]/g, '_')
+}
+
+/**
+ * Scan directory for client components ('use client' files)
+ */
+function scanForClientComponents(dir: string, root: string, components: ClientComponent[]) {
+  if (!fs.existsSync(dir)) return
+
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+
+    if (entry.isDirectory()) {
+      // Skip node_modules and build directories
+      if (['node_modules', 'dist', '.git'].includes(entry.name)) continue
+      scanForClientComponents(fullPath, root, components)
+    } else {
+      // Check .tsx, .ts, .jsx, .js files
+      if (/\.(tsx?|jsx?)$/.test(entry.name) && hasUseClientDirective(fullPath)) {
+        const moduleId = generateModuleId(fullPath, root)
+        const name = path.basename(entry.name, path.extname(entry.name))
+        components.push({ filePath: fullPath, moduleId, name })
+      }
+    }
+  }
 }
 
 /**
@@ -54,6 +120,7 @@ export async function scanProject(root: string): Promise<ProjectStructure> {
     pages: [],
     apiGet: [],
     apiPost: [],
+    clientComponents: [],
   }
 
   // Scan app/ for pages
@@ -88,6 +155,20 @@ export async function scanProject(root: string): Promise<ProjectStructure> {
       routePath: '',
       type: 'contract',
     }
+  }
+
+  // Scan for client components ('use client' files) in app/, components/, and public/
+  // These will be bundled separately and registered for hydration
+  scanForClientComponents(appDir, root, structure.clientComponents)
+
+  const componentsDir = path.join(root, 'components')
+  if (fs.existsSync(componentsDir)) {
+    scanForClientComponents(componentsDir, root, structure.clientComponents)
+  }
+
+  const publicDir = path.join(root, 'public')
+  if (fs.existsSync(publicDir)) {
+    scanForClientComponents(publicDir, root, structure.clientComponents)
   }
 
   return structure
@@ -151,36 +232,122 @@ interface BundleResult {
 }
 
 /**
+ * Create esbuild plugin to replace client component imports with references
+ * Instead of inlining client component code, we emit a reference object
+ * that tana-edge's Flight serializer will recognize
+ */
+function createClientComponentPlugin(clientComponents: ClientComponent[]) {
+  // Build a map of file paths to module IDs
+  const clientPaths = new Map<string, string>()
+  for (const cc of clientComponents) {
+    // Normalize paths for matching
+    clientPaths.set(cc.filePath, cc.moduleId)
+    // Also add without extension for common import patterns
+    clientPaths.set(cc.filePath.replace(/\.[^.]+$/, ''), cc.moduleId)
+  }
+
+  return {
+    name: 'client-component-ref',
+    setup(build: any) {
+      // Intercept resolution of potential client components
+      build.onResolve({ filter: /.*/ }, (args: any) => {
+        if (args.kind !== 'import-statement') return null
+
+        // Try to resolve the import path
+        let resolvedPath: string | null = null
+
+        if (args.path.startsWith('.') || args.path.startsWith('/')) {
+          // Relative or absolute import - resolve from importer
+          const dir = path.dirname(args.importer)
+          const possiblePaths = [
+            path.resolve(dir, args.path),
+            path.resolve(dir, args.path + '.tsx'),
+            path.resolve(dir, args.path + '.ts'),
+            path.resolve(dir, args.path + '.jsx'),
+            path.resolve(dir, args.path + '.js'),
+          ]
+
+          for (const p of possiblePaths) {
+            if (clientPaths.has(p)) {
+              resolvedPath = p
+              break
+            }
+          }
+        }
+
+        if (resolvedPath && clientPaths.has(resolvedPath)) {
+          // This is a client component import - mark for replacement
+          return {
+            path: resolvedPath,
+            namespace: 'client-ref',
+            pluginData: { moduleId: clientPaths.get(resolvedPath) }
+          }
+        }
+
+        return null
+      })
+
+      // Load client component references as reference objects
+      build.onLoad({ filter: /.*/, namespace: 'client-ref' }, (args: any) => {
+        const moduleId = args.pluginData.moduleId
+        // Return a client reference object that Flight protocol recognizes
+        // tana-edge will serialize this as $C{moduleId}
+        return {
+          contents: `
+// Client Component Reference: ${moduleId}
+const ClientRef = {
+  $$typeof: Symbol.for('react.client.reference'),
+  $$id: '${moduleId}',
+  $$async: false
+};
+export default ClientRef;
+`,
+          loader: 'js'
+        }
+      })
+    }
+  }
+}
+
+/**
  * Generate unified contract.js with all code inlined
  */
 export async function generateContract(
   structure: ProjectStructure,
   outDir: string
-): Promise<string> {
+): Promise<{ contractPath: string; clientBundlePath: string | null }> {
   // Output as contract.js - unified contract file for both CLI deploy and tana-edge runtime
-  // The unified contract exports: ssr(), get(), post(), init(), contract()
+  // The unified contract exports: Page(), get(), post(), init(), contract()
   const contractPath = path.join(outDir, 'contract.js')
 
+  const { clientComponents } = structure
+
   // Build inline bundles for each file (with index for unique naming)
+  // Pass client components so the plugin can replace imports with references
   const pageBundles = await Promise.all(
-    structure.pages.map((page, i) => bundleFile(page.filePath, 'page', i))
+    structure.pages.map((page, i) => bundleFile(page.filePath, 'page', i, clientComponents))
   )
 
   const getBundles = await Promise.all(
-    structure.apiGet.map((handler, i) => bundleFile(handler.filePath, 'get', i))
+    structure.apiGet.map((handler, i) => bundleFile(handler.filePath, 'get', i, clientComponents))
   )
 
   const postBundles = await Promise.all(
-    structure.apiPost.map((handler, i) => bundleFile(handler.filePath, 'post', i))
+    structure.apiPost.map((handler, i) => bundleFile(handler.filePath, 'post', i, clientComponents))
   )
 
   const initBundle = structure.init
-    ? await bundleFile(structure.init.filePath, 'init', 0)
+    ? await bundleFile(structure.init.filePath, 'init', 0, clientComponents)
     : null
 
   const contractBundle = structure.contract
-    ? await bundleFile(structure.contract.filePath, 'contract', 0)
+    ? await bundleFile(structure.contract.filePath, 'contract', 0, clientComponents)
     : null
+
+  // Generate client component manifest for the contract
+  const clientManifest = clientComponents.length > 0
+    ? generateClientManifest(clientComponents)
+    : '// No client components'
 
   // Generate contract.js content (unified RSC contract)
   const code = [
@@ -193,6 +360,10 @@ export async function generateContract(
     '',
     '// Tana runtime modules (provided by tana-edge)',
     'import { json, status } from "tana/http";',
+    '',
+    '// ========== Client Component Manifest ==========',
+    '',
+    clientManifest,
     '',
     '// ========== Blockchain Functions ==========',
     '',
@@ -221,23 +392,107 @@ export async function generateContract(
     generateAPIRouter(structure.apiPost, postBundles, 'post'),
   ].join('\n')
 
-  // Write to file
+  // Write server contract
   fs.writeFileSync(contractPath, code)
 
-  return contractPath
+  // Generate client component bundle if there are client components
+  let clientBundlePath: string | null = null
+  if (clientComponents.length > 0) {
+    clientBundlePath = await generateClientBundle(clientComponents, outDir)
+  }
+
+  return { contractPath, clientBundlePath }
+}
+
+/**
+ * Generate the client component manifest for the server contract
+ * This defines functions that create client references for Flight serialization
+ */
+function generateClientManifest(clientComponents: ClientComponent[]): string {
+  const refs = clientComponents.map(cc => {
+    return `// ${cc.name} -> ${cc.moduleId}
+export const ${cc.name}_ClientRef = {
+  $$typeof: Symbol.for('react.client.reference'),
+  $$id: '${cc.moduleId}',
+  $$async: false
+};`
+  }).join('\n\n')
+
+  return `// Client Component References
+// These are serialized as $C{moduleId} by tana-edge Flight protocol
+
+${refs}`
+}
+
+/**
+ * Generate the client-side bundle containing all client components
+ * This bundle registers components with the hydration runtime
+ */
+async function generateClientBundle(
+  clientComponents: ClientComponent[],
+  outDir: string
+): Promise<string> {
+  const clientBundlePath = path.join(outDir, 'client-components.js')
+
+  // Create a virtual entry that imports and registers all client components
+  const entryCode = clientComponents.map((cc, i) => {
+    return `import Component_${i} from '${cc.filePath}';
+window.__registerClientComponent('${cc.moduleId}', Component_${i});`
+  }).join('\n')
+
+  // Write temporary entry file
+  const tempEntry = path.join(outDir, '_client-entry.js')
+  fs.writeFileSync(tempEntry, `// Auto-generated client component registry
+${entryCode}
+`)
+
+  try {
+    const result = await build({
+      entryPoints: [tempEntry],
+      bundle: true,
+      format: 'esm',
+      platform: 'browser',
+      write: false,
+      jsx: 'automatic',
+      minify: false,
+      external: ['react', 'react-dom'],
+    })
+
+    fs.writeFileSync(clientBundlePath, result.outputFiles[0].text)
+  } finally {
+    // Clean up temp file
+    if (fs.existsSync(tempEntry)) {
+      fs.unlinkSync(tempEntry)
+    }
+  }
+
+  return clientBundlePath
 }
 
 /**
  * Bundle a single file and transform it for inlining
  * Returns { code, componentName } where componentName is the unique alias for the export
+ *
+ * When clientComponents is provided, imports of those files are replaced with
+ * client references instead of being inlined.
  */
-async function bundleFile(filePath: string, type: string, index: number): Promise<{ code: string; componentName: string }> {
+async function bundleFile(
+  filePath: string,
+  type: string,
+  index: number,
+  clientComponents: ClientComponent[] = []
+): Promise<{ code: string; componentName: string }> {
+  const plugins = clientComponents.length > 0
+    ? [createClientComponentPlugin(clientComponents)]
+    : []
+
   const result = await build({
     entryPoints: [filePath],
     bundle: true,
     format: 'esm',
     platform: 'neutral',
     write: false,
+    plugins,
     external: [
       // RSC: We use the global jsx/Fragment/Suspense from tana-edge's rsc-runtime.js
       // No react-dom/server needed - tana-edge handles Flight serialization

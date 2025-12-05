@@ -234,7 +234,8 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
 
   let tanaEdgeProcess: ChildProcess | null = null
   let viteServer: ViteDevServer
-  let root: string
+  let root: string          // Vite's configured root (may be a subdirectory like 'public')
+  let projectRoot: string   // Actual project root (where app/, api/, blockchain/ live)
   let outDir: string
   let resolvedContractsDir: string
   let projectStructure: ProjectStructure | null = null
@@ -284,17 +285,30 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
     // Generate the virtual hydration module content
     load(id) {
       if (id === RESOLVED_VIRTUAL_HYDRATE_ID) {
-        return generateHydrationModule(projectStructure, root)
+        return generateHydrationModule(projectStructure, projectRoot)
       }
     },
 
     configResolved(config) {
       root = config.root
-      outDir = path.join(root, '.tana')
-      // Default to project root - tana-edge will look for {root}/blockchain/
-      resolvedContractsDir = contractsDir
-        ? path.resolve(root, contractsDir)
+
+      // Determine project root: if Vite's root is a subdirectory (e.g., 'public'),
+      // look for app/api/blockchain directories in the parent
+      const potentialProjectRoot = path.dirname(root)
+      const hasAppDir = fs.existsSync(path.join(potentialProjectRoot, 'app'))
+      const hasApiDir = fs.existsSync(path.join(potentialProjectRoot, 'api'))
+      const hasBlockchainDir = fs.existsSync(path.join(potentialProjectRoot, 'blockchain'))
+
+      // If RSC directories exist in parent, use parent as project root
+      projectRoot = (hasAppDir || hasApiDir || hasBlockchainDir)
+        ? potentialProjectRoot
         : root
+
+      outDir = path.join(projectRoot, '.tana')
+      // Default to project root - tana-edge will look for {projectRoot}/blockchain/
+      resolvedContractsDir = contractsDir
+        ? path.resolve(projectRoot, contractsDir)
+        : projectRoot
 
       // Resolve tana-edge binary: explicit option > node_modules > PATH
       resolvedEdgeBinary = edgeBinary || findTanaEdgeBinary(root)
@@ -491,16 +505,16 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
         console.log('[tana] No client entry found, generating auto-hydration entry...')
 
         // Scan project for pages (reuse existing structure if available)
-        const structure = projectStructure || await scanProject(root)
+        const structure = projectStructure || await scanProject(projectRoot)
 
         if (structure.pages.length === 0) {
           console.log('[tana] No pages found, skipping client bundle generation')
         } else {
           // Generate a temporary client entry file
-          const tempClientPath = path.join(root, '.tana', 'client.tsx')
+          const tempClientPath = path.join(projectRoot, '.tana', 'client.tsx')
           fs.mkdirSync(path.dirname(tempClientPath), { recursive: true })
 
-          const clientCode = generateClientEntryCode(structure, root)
+          const clientCode = generateClientEntryCode(structure, projectRoot)
           fs.writeFileSync(tempClientPath, clientCode)
 
           clientEntry = tempClientPath
@@ -558,7 +572,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       console.log('[tana] Building initial contract...')
 
       // Scan project structure and store it for the hydration module
-      projectStructure = await scanProject(root)
+      projectStructure = await scanProject(projectRoot)
       const structure = projectStructure
 
       // Generate unified contract for dev
@@ -786,7 +800,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       console.log('[tana] 🔨 Rebuilding unified contract...')
 
       // Scan project structure and update for the hydration module
-      projectStructure = await scanProject(root)
+      projectStructure = await scanProject(projectRoot)
       const structure = projectStructure
 
       // Generate unified contract for dev
@@ -969,10 +983,23 @@ console.log('[tana] No pages to hydrate');
   // Server components stay on the server - we just receive the Flight stream
   // Only client components (marked with 'use client') need to be registered
 
+  // Generate imports for client components
+  const clientImports = structure.clientComponents?.length > 0
+    ? structure.clientComponents.map((cc, i) => {
+        // Use relative path from project root for Vite to resolve
+        const relativePath = cc.filePath.replace(root, '').replace(/^[\/\\]/, '')
+        return `import ClientComponent_${i} from '/${relativePath}';
+window.__registerClientComponent('${cc.moduleId}', ClientComponent_${i});`
+      }).join('\n')
+    : '// No client components to register'
+
   return `// Tana RSC Hydration Module (auto-generated)
 // Uses Flight protocol to receive server-rendered component tree
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+
+// ========== Client Component Imports ==========
+${clientImports}
 
 // Flight protocol markers
 const FLIGHT_ELEMENT = '$';
@@ -1163,11 +1190,26 @@ console.log('[tana] No pages to hydrate');
 
   // For RSC, we don't import server components
   // The Flight protocol sends the rendered tree from the server
+  // But we DO import client components so they can be hydrated
+
+  // Generate imports for client components (in production, these get bundled)
+  const clientImports = structure.clientComponents?.length > 0
+    ? structure.clientComponents.map((cc, i) => {
+        return `import ClientComponent_${i} from '${cc.filePath}';`
+      }).join('\n')
+    : ''
+
+  const clientRegistrations = structure.clientComponents?.length > 0
+    ? structure.clientComponents.map((cc, i) => {
+        return `(window as any).__registerClientComponent('${cc.moduleId}', ClientComponent_${i});`
+      }).join('\n')
+    : '// No client components to register'
 
   return `// Tana RSC Client Entry (auto-generated for production)
 // Uses Flight protocol to receive server-rendered component tree
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+${clientImports}
 
 // Flight protocol markers
 const FLIGHT_ELEMENT = '$';
@@ -1183,6 +1225,9 @@ const clientComponents = new Map<string, React.ComponentType<any>>();
 (window as any).__registerClientComponent = (moduleId: string, Component: React.ComponentType<any>) => {
   clientComponents.set(moduleId, Component);
 };
+
+// Register imported client components
+${clientRegistrations}
 
 // Row cache for Flight response
 let rowCache = new Map<number, any>();
