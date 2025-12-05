@@ -20,12 +20,19 @@ console.log('[tana] No pages to hydrate');
   // Only client components (marked with 'use client') need to be registered
 
   // Generate imports for client components
-  const clientImports = structure.clientComponents?.length > 0
+  // Note: We can't call window.__registerClientComponent from imports because
+  // ES module imports are hoisted and run before any other code
+  const clientImportStatements = structure.clientComponents?.length > 0
     ? structure.clientComponents.map((cc, i) => {
-        // Use relative path from project root for Vite to resolve
-        const relativePath = cc.filePath.replace(root, '').replace(/^[\/\\]/, '')
-        return `import ClientComponent_${i} from '/${relativePath}';
-window.__registerClientComponent('${cc.moduleId}', ClientComponent_${i});`
+        // Use /@fs/ prefix for absolute paths - this bypasses Vite's public directory handling
+        return `import ClientComponent_${i} from '/@fs${cc.filePath}';`
+      }).join('\n')
+    : ''
+
+  // Registration happens after the Map is created (below)
+  const clientRegistrations = structure.clientComponents?.length > 0
+    ? structure.clientComponents.map((cc, i) => {
+        return `clientComponents.set('${cc.moduleId}', ClientComponent_${i});`
       }).join('\n')
     : '// No client components to register'
 
@@ -33,9 +40,7 @@ window.__registerClientComponent('${cc.moduleId}', ClientComponent_${i});`
 // Uses Flight protocol to receive server-rendered component tree
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-
-// ========== Client Component Imports ==========
-${clientImports}
+${clientImportStatements}
 
 // Flight protocol markers
 const FLIGHT_ELEMENT = '$';
@@ -44,10 +49,13 @@ const FLIGHT_CLIENT_REF = '$C';
 const FLIGHT_UNDEFINED = '$undefined';
 const FLIGHT_PROMISE = '$@';
 
-// Client component registry - populated by 'use client' components
+// Client component registry
 const clientComponents = new Map();
 
-// For dev, client components are registered globally by their modules
+// Register imported client components
+${clientRegistrations}
+
+// Also expose registration globally (for dynamic imports)
 if (typeof window !== 'undefined') {
   window.__registerClientComponent = (moduleId, Component) => {
     clientComponents.set(moduleId, Component);

@@ -9,8 +9,15 @@ import fs from 'fs'
  * Returns the first stylesheet found, or null if none exist
  */
 export function detectStylesheet(root: string): string | null {
+  // Paths relative to Vite's root directory
+  // Note: When root is 'public/', files there are served directly (styles.css → /styles.css)
+  // When root is '.', public/ files are served without prefix (public/styles.css → /styles.css)
   const commonPaths = [
-    'src/styles.css',     // Tailwind default
+    'styles.css',         // Direct in root (when root: 'public')
+    'index.css',          // Alternative direct in root
+    'public/styles.css',  // Tana default (when root: '.')
+    'public/index.css',   // Alternative in public
+    'src/styles.css',     // Tailwind default (deprecated)
     'src/index.css',      // Create React App default
     'src/main.css',       // Common alternative
     'src/app.css',        // Another common name
@@ -22,6 +29,11 @@ export function detectStylesheet(root: string): string | null {
     const fullPath = path.join(root, stylePath)
     if (fs.existsSync(fullPath)) {
       console.log(`[tana] Auto-detected stylesheet: ${stylePath}`)
+      // Files in public/ are served at root URL (without public/ prefix)
+      if (stylePath.startsWith('public/')) {
+        return `/${stylePath.slice(7)}` // Remove 'public/' prefix
+      }
+      // Direct files in root are served at their path
       return `/${stylePath}`
     }
   }
