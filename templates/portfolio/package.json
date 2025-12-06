@@ -2,9 +2,9 @@
   "name": "{{name}}",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "start": "tana start",
+    "build": "tana build",
+    "test": "tana test"
   },
   "dependencies": {
     "react": "^19.0.0",
