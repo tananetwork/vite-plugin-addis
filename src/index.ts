@@ -130,7 +130,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       if (output) {
         out.log('edge', output)
       }
-      if (output.includes('listening')) {
+      if (output.includes('listening') || output.includes('is running')) {
         edgeReady = true
         resolveEdgeReady()
         out.log('ready', 'tana-edge')
@@ -142,7 +142,7 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       if (output) {
         out.log('edge', output)
       }
-      if (output.includes('listening')) {
+      if (output.includes('listening') || output.includes('is running')) {
         edgeReady = true
         resolveEdgeReady()
         out.log('ready', 'tana-edge')
