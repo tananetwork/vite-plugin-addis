@@ -374,9 +374,10 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       server.httpServer?.once('listening', () => {
         const address = server.httpServer?.address()
         const port = (typeof address === 'object' ? address?.port : undefined) ?? 5173
+        const host = server.config.server.host
 
         setTimeout(() => {
-          printTanaBanner(port, edgePort)
+          printTanaBanner({ vitePort: port, edgePort, host })
         }, 100)
       })
 

@@ -1,6 +1,8 @@
 // Tana Terminal Banner
 // ASCII art and terminal output formatting
 
+import os from 'os'
+
 // ANSI colors for terminal output
 export const colors = {
   reset: '\x1b[0m',
@@ -13,9 +15,32 @@ export const colors = {
 }
 
 /**
+ * Get the primary network IP address (non-internal IPv4)
+ */
+function getNetworkAddress(): string | null {
+  const interfaces = os.networkInterfaces()
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      // Skip internal (loopback) and non-IPv4 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address
+      }
+    }
+  }
+  return null
+}
+
+interface BannerOptions {
+  vitePort: number
+  edgePort: number
+  host?: boolean | string
+}
+
+/**
  * Print custom Tana startup banner
  */
-export function printTanaBanner(vitePort: number, edgePort: number) {
+export function printTanaBanner(options: BannerOptions) {
+  const { vitePort, edgePort, host } = options
   const { reset, bold, magenta, cyan, green, gray, dim } = colors
 
   // Clear screen and move cursor to top
@@ -38,6 +63,15 @@ export function printTanaBanner(vitePort: number, edgePort: number) {
   console.log(`${gray}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}`)
   console.log()
   console.log(`  ${green}➜${reset}  ${bold}Local:${reset}   ${cyan}http://localhost:${vitePort}/${reset}`)
+
+  // Show network URL if host mode is enabled
+  if (host) {
+    const networkAddress = getNetworkAddress()
+    if (networkAddress) {
+      console.log(`  ${dim}➜${reset}  ${dim}Network:${reset} ${dim}http://${networkAddress}:${vitePort}/${reset}`)
+    }
+  }
+
   console.log(`  ${dim}➜${reset}  ${dim}Edge:${reset}    ${dim}http://localhost:${edgePort}/${reset}`)
   console.log()
   console.log(`${gray}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}`)
