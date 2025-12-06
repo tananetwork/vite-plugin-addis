@@ -13,7 +13,7 @@
     "tailwind-merge": "^2.5.0"
   },
   "devDependencies": {
-    "@tananetwork/vite-plugin-tana": "file:../../",
+    "@tananetwork/vite-plugin-tana": "^0.5.4",
     "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
