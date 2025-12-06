@@ -3,7 +3,12 @@
 
 import path from 'path'
 import fs from 'fs'
+import { fileURLToPath } from 'url'
 import { out } from '@tananetwork/stdio'
+
+// ESM equivalent of __dirname
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 /**
  * Auto-detect stylesheet path from common locations
@@ -43,16 +48,9 @@ export function detectStylesheet(root: string): string | null {
 }
 
 /**
- * Find tana-edge binary - checks node_modules first, then PATH
+ * Find tana-edge binary - checks node_modules first, then plugin's own node_modules, then PATH
  */
 export function findTanaEdgeBinary(root: string): string {
-  // Check node_modules/.bin first (where npm/bun links binaries)
-  const binPath = path.join(root, 'node_modules', '.bin', 'tana-edge')
-  if (fs.existsSync(binPath)) {
-    return binPath
-  }
-
-  // Check platform-specific package directly
   const platform = process.platform
   const arch = process.arch
   const platformMap: Record<string, string> = {
@@ -65,8 +63,14 @@ export function findTanaEdgeBinary(root: string): string {
   const platformKey = `${platform}-${arch}`
   const platformPkg = platformMap[platformKey]
 
+  // Check node_modules/.bin first (where npm/bun links binaries)
+  const binPath = path.join(root, 'node_modules', '.bin', 'tana-edge')
+  if (fs.existsSync(binPath)) {
+    return binPath
+  }
+
   if (platformPkg) {
-    // Check new tana-edge-* packages first
+    // Check consumer's node_modules for tana-edge-* packages
     const edgeBinPath = path.join(
       root,
       'node_modules',
@@ -78,7 +82,21 @@ export function findTanaEdgeBinary(root: string): string {
       return edgeBinPath
     }
 
-    // Fall back to legacy tana-* packages
+    // Check plugin's own node_modules (for file: linked installs)
+    // __dirname in ESM is not available, so we use a path relative to this file
+    const pluginRoot = path.resolve(__dirname, '..')
+    const pluginEdgePath = path.join(
+      pluginRoot,
+      'node_modules',
+      '@tananetwork',
+      `tana-edge-${platformPkg}`,
+      'tana-edge'
+    )
+    if (fs.existsSync(pluginEdgePath)) {
+      return pluginEdgePath
+    }
+
+    // Fall back to legacy tana-* packages in consumer
     const legacyBinPath = path.join(
       root,
       'node_modules',
