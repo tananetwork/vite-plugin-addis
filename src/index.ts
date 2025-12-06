@@ -102,6 +102,54 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
   }
 
   /**
+   * Poll tana-edge health endpoint until it responds
+   * Much more reliable than parsing stdout - tests actual server readiness
+   */
+  function waitForEdgeHealth(maxAttempts = 50, intervalMs = 100): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let attempts = 0
+
+      const check = () => {
+        attempts++
+        const req = httpRequest(
+          {
+            hostname: 'localhost',
+            port: edgePort,
+            path: '/health',
+            method: 'GET',
+            timeout: 500,
+          },
+          (res) => {
+            // Any response means edge is up and accepting connections
+            resolve()
+          }
+        )
+
+        req.on('error', () => {
+          if (attempts >= maxAttempts) {
+            reject(new Error(`tana-edge failed to start after ${attempts} attempts`))
+          } else {
+            setTimeout(check, intervalMs)
+          }
+        })
+
+        req.on('timeout', () => {
+          req.destroy()
+          if (attempts >= maxAttempts) {
+            reject(new Error(`tana-edge failed to start after ${attempts} attempts`))
+          } else {
+            setTimeout(check, intervalMs)
+          }
+        })
+
+        req.end()
+      }
+
+      check()
+    })
+  }
+
+  /**
    * Start the tana-edge binary
    */
   function startTanaEdge() {
@@ -119,34 +167,11 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       env.DATABASE_URL = database
     }
 
+    // Use inherit for stdio - simpler and avoids pipe issues
     tanaEdgeProcess = spawn(resolvedEdgeBinary, [], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+      stdio: ['ignore', 'inherit', 'inherit'],
       env,
       cwd: resolvedContractsDir,
-    })
-
-    tanaEdgeProcess.stdout?.on('data', (data) => {
-      const output = data.toString().trim()
-      if (output) {
-        out.log('edge', output)
-      }
-      if (output.includes('listening') || output.includes('is running')) {
-        edgeReady = true
-        resolveEdgeReady()
-        out.log('ready', 'tana-edge')
-      }
-    })
-
-    tanaEdgeProcess.stderr?.on('data', (data) => {
-      const output = data.toString().trim()
-      if (output) {
-        out.log('edge', output)
-      }
-      if (output.includes('listening') || output.includes('is running')) {
-        edgeReady = true
-        resolveEdgeReady()
-        out.log('ready', 'tana-edge')
-      }
     })
 
     tanaEdgeProcess.on('error', (error) => {
@@ -160,6 +185,17 @@ export default function tanaPlugin(options: TanaPluginOptions = {}): Plugin {
       }
       resetEdgeReady()
     })
+
+    // Poll health endpoint instead of parsing stdout
+    waitForEdgeHealth()
+      .then(() => {
+        edgeReady = true
+        resolveEdgeReady()
+        out.log('ready', 'tana-edge')
+      })
+      .catch((error) => {
+        out.error('edge', `${error.message}`)
+      })
   }
 
   /**
